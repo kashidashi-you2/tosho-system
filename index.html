@@ -1,9 +1,11 @@
+https://script.google.com/macros/s/AKfycbz_l3ve7c-rr6tbBn48CXMXLGSoeQNQ7Y_SHydHzAiqZYPNZO4kERpOZ56d2BGQILsw/exec
+
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>学校図書貸出システム (確定版)</title>
+  <title>学校図書貸出システム (完全安定版)</title>
   <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
     body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 15px; }
@@ -44,7 +46,7 @@
 // ==========================================================
 // 👇【重要】ここにあなたのGASのURLを貼り付けてください（前後の " は消さないでください）
 // ==========================================================
-const GAS_URL = "https://script.google.com/macros/s/AKfycbz2-e1lH1pf-0MXC2m28LXGWtwGujdA6MOQobsfFHDBsQ3-Q46AdPuQSnheuhHpv04v/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbz_l3ve7c-rr6tbBn48CXMXLGSoeQNQ7Y_SHydHzAiqZYPNZO4kERpOZ56d2BGQILsw/exec";
 
 
 let mode = "";
@@ -70,23 +72,13 @@ function setMode(selected) {
         document.getElementById("status").innerHTML = "📗 【返却】本のQRを読み取るか、手入力してください";
     }
     
-    // カメラの起動エラーが起きても、モード選択自体は絶対にフリーズさせない仕組み
-    try {
+    // カメラは一度だけ起動させ、モード変更時は起動し直さない（フリーズの元を完全カット）
+    if (!html5QrCode || !html5QrCode.isScanning) {
         startScanner();
-    } catch(e) {
-        console.error("カメラ起動エラーをバイパスしました:", e);
     }
 }
 
 function startScanner() {
-  if (html5QrCode && html5QrCode.isScanning) {
-    html5QrCode.stop().then(() => { initAndStart(); }).catch(() => { initAndStart(); });
-  } else {
-    initAndStart();
-  }
-}
-
-function initAndStart() {
   document.getElementById("reader").innerHTML = ""; 
   html5QrCode = new Html5Qrcode("reader");
   html5QrCode.start(
@@ -95,12 +87,13 @@ function initAndStart() {
     onScanSuccess
   )
   .catch(err => {
-    console.log("カメラ起動エラー（手入力モードへ自動移行）: " + err);
+    console.log("カメラ起動処理をスキップ（手入力モード）: " + err);
   });
 }
 
 function onScanSuccess(decodedText) {
-    if (isScanLocked) return;
+    if (!mode) return; // モード未選択時はスキャンを無視
+    if (isScanLocked) return; // 送信中や連続スキャン防止用のロック
 
     if (mode === "lend") {
         if (step === 1) {
@@ -110,13 +103,16 @@ function onScanSuccess(decodedText) {
             step = 2;
             document.getElementById("status").style.color = "#006400";
             document.getElementById("status").innerHTML = "👤 【貸出】利用者QRを読み取るか、手入力してください";
+            // 2連射防止のために1.5秒ロックをかけ、その後解除する（カメラは止めない）
             setTimeout(() => { isScanLocked = false; }, 1500);
         } else if (step === 2) {
+            isScanLocked = true; // 送信中の追加スキャンを防ぐ
             user = decodedText;
             document.getElementById("userCode").value = user;
             sendData();
         }
     } else if (mode === "return") {
+        isScanLocked = true;
         book = decodedText;
         document.getElementById("bookCode").value = book;
         user = "";
@@ -152,13 +148,9 @@ function sendData() {
     document.getElementById("loading").style.display = "block";
     document.getElementById("status").style.color = "#000000";
     document.getElementById("status").innerHTML = "データを送信中...";
-
-    // 送信時はカメラ停止エラーでフリーズしないよう安全に通信を実行
-    if (html5QrCode && html5QrCode.isScanning) {
-        html5QrCode.stop().then(() => { executeFetch(); }).catch(() => { executeFetch(); });
-    } else {
-        executeFetch();
-    }
+    
+    // カメラは止めて再起動するのではなく、動かしたまま通信だけを行う（iPhoneの負荷を軽減）
+    executeFetch();
 }
 
 function executeFetch() {
@@ -171,10 +163,10 @@ function executeFetch() {
         document.getElementById("loading").style.display = "none";
         document.getElementById("status").innerHTML = message;
 
+        // 入力枠をクリア
         document.getElementById("bookCode").value = "";
         document.getElementById("userCode").value = "";
         book = ""; user = ""; step = 1; 
-        isScanLocked = false; 
 
         if (message.includes("完了")) {
             document.getElementById("status").style.color = "#006400";
@@ -184,18 +176,14 @@ function executeFetch() {
             document.getElementById("status").innerHTML += `\n\n⚠️ エラーを確認して、もう一度やり直してください。`;
         }
         
-        try {
-            setTimeout(() => { startScanner(); }, 1800);
-        } catch(e) {}
+        // 1.8秒後に次のスキャンを受け付ける状態に戻す（カメラはついたまま）
+        setTimeout(() => { isScanLocked = false; }, 1800);
     })
     .catch(error => {
         document.getElementById("loading").style.display = "none";
         document.getElementById("status").style.color = "#d32f2f";
         alert("通信エラーが発生しました。\n詳細: " + error.message);
-        isScanLocked = false;
-        try {
-            setTimeout(() => { startScanner(); }, 1800);
-        } catch(e) {}
+        setTimeout(() => { isScanLocked = false; }, 1800);
     });
 }
 </script>
