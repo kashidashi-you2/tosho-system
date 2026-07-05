@@ -1,11 +1,9 @@
-https://script.google.com/macros/s/AKfycbyvTNK-9NRuhR1RVjvqb7UZ03AH-mcohXacMeUIA19n0vZ4IxpM220ZK2a1s1pqTpKQ/exec
-
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>学校図書貸出システム (ハイブリッド版)</title>
+  <title>学校図書貸出システム (ハイブリッド修正版)</title>
   <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
     body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 15px; }
@@ -46,7 +44,8 @@ https://script.google.com/macros/s/AKfycbyvTNK-9NRuhR1RVjvqb7UZ03AH-mcohXacMeUIA
 // ==========================================================
 // 👇【重要】ここにあなたのGASのURLを貼り付けてください（前後の " は消さないでください）
 // ==========================================================
-const GAS_URL = "https://script.google.com/macros/s/AKfycbyvTNK-9NRuhR1RVjvqb7UZ03AH-mcohXacMeUIA19n0vZ4IxpM220ZK2a1s1pqTpKQ/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwbkEEdKjgZ3RrrpSq7_uYq_oTmHZHPTx05JsvIFOzdFLUx8jlIFNBsBF5767Jb5Mf8/exec
+";
 
 
 let mode = "";
@@ -54,14 +53,15 @@ let step = 1; // 1: 本の読み取り待ち, 2: 利用者の読み取り待ち
 let book = "";
 let user = "";
 let html5QrCode = null;
+let isScanLocked = false; // 二重読み込み防止用のロック変数
 
 function setMode(selected) {
     mode = selected;
-    // 画面の入力欄を一度きれいにクリアする
     document.getElementById("bookCode").value = "";
     document.getElementById("userCode").value = "";
     book = ""; user = "";
     step = 1;
+    isScanLocked = false;
 
     if (mode === "lend") {
         document.getElementById("status").style.color = "#006400";
@@ -91,23 +91,31 @@ function initAndStart() {
     onScanSuccess
   )
   .catch(err => {
-    // カメラがないPCなどの環境でも手入力運用ができるよう、エラーはログに留めて処理を続行する
     console.log("カメラの起動をスキップしました（手入力は可能です）: " + err);
   });
 }
 
 // QRコードの読み取りに成功したときの処理
 function onScanSuccess(decodedText) {
+    // 【対策2】二重読み込み防止ロックがかかっていたら完全に無視する
+    if (isScanLocked) return;
+
     if (mode === "lend") {
         if (step === 1) {
+            // 1回目の読み取り（本ID）が成功したらロックをかける
+            isScanLocked = true;
             book = decodedText;
             document.getElementById("bookCode").value = book;
             step = 2;
+            document.getElementById("status").style.color = "#006400";
             document.getElementById("status").innerHTML = "👤 【貸出】利用者QRを読み取るか、手入力してください";
+            
+            // 1.5秒後にロックを解除（これで高速2連射されても利用者IDに化けなくなります）
+            setTimeout(() => { isScanLocked = false; }, 1500);
+
         } else if (step === 2) {
             user = decodedText;
             document.getElementById("userCode").value = user;
-            // 本と利用者が両方QRで揃ったら、自動で送信処理へ進む
             if (html5QrCode && html5QrCode.isScanning) {
                 html5QrCode.stop().then(() => { sendData(); }).catch(() => { sendData(); });
             } else {
@@ -118,7 +126,6 @@ function onScanSuccess(decodedText) {
         book = decodedText;
         document.getElementById("bookCode").value = book;
         user = "";
-        // 返却は本だけで完結するため、即時自動送信
         if (html5QrCode && html5QrCode.isScanning) {
             html5QrCode.stop().then(() => { sendData(); }).catch(() => { sendData(); });
         } else {
@@ -127,23 +134,28 @@ function onScanSuccess(decodedText) {
     }
 }
 
-// キーボードで直接手入力された文字をプログラムと同期させる処理
+// キーボードで直接手入力・削除されたときのリアルタイム同期処理
 function syncManualInput() {
     book = document.getElementById("bookCode").value.trim();
     user = document.getElementById("userCode").value.trim();
     
-    // 貸出モードのとき、本番号が入力されていて利用者欄が空なら、ステップを自動で2（利用者待ち）に進める
     if (mode === "lend") {
-        if (book !== "" && user === "") {
+        // 【対策1】もし本番号が空っぽに消されたら、強制的に本の読み取り待ち（ステップ1）に戻す
+        if (book === "") {
+            step = 1;
+            document.getElementById("status").style.color = "#006400";
+            document.getElementById("status").innerHTML = "📕 【貸出】本のQRを読み取るか、手入力してください";
+        } 
+        // 本番号が入っていて、利用者欄が空ならステップ2（利用者待ち）にする
+        else if (book !== "" && user === "") {
             step = 2;
+            document.getElementById("status").style.color = "#006400";
             document.getElementById("status").innerHTML = "👤 【貸出】利用者QRを読み取るか、手入力してください";
         }
     }
 }
 
-// データをGoogle（GAS）に送信する処理
 function sendData() {
-    // 送信直前に、入力欄の最新状態（手入力された分も含む）を取得する
     book = document.getElementById("bookCode").value.trim();
     user = document.getElementById("userCode").value.trim();
 
@@ -155,7 +167,6 @@ function sendData() {
     document.getElementById("status").style.color = "#000000";
     document.getElementById("status").innerHTML = "データを送信中...";
 
-    // 通信中に次の読み取りが被らないよう、カメラを一旦ストップする
     if (html5QrCode && html5QrCode.isScanning) {
         html5QrCode.stop().then(() => { executeFetch(); }).catch(() => { executeFetch(); });
     } else {
@@ -173,10 +184,10 @@ function executeFetch() {
         document.getElementById("loading").style.display = "none";
         document.getElementById("status").innerHTML = message;
 
-        // 次の受付のためにテキストボックスをきれいにクリアする
         document.getElementById("bookCode").value = "";
         document.getElementById("userCode").value = "";
         book = ""; user = ""; step = 1; 
+        isScanLocked = false; // 送信完了後にロックをリセット
 
         if (message.includes("完了")) {
             document.getElementById("status").style.color = "#006400";
@@ -191,6 +202,7 @@ function executeFetch() {
         document.getElementById("loading").style.display = "none";
         document.getElementById("status").style.color = "#d32f2f";
         alert("通信エラーが発生しました。\n詳細: " + error.message);
+        isScanLocked = false;
         setTimeout(() => { startScanner(); }, 1800);
     });
 }
