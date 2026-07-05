@@ -1,59 +1,182 @@
+
+
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>図書システム（自動接続テスト版）</title>
+  <title>学校図書貸出システム</title>
   <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; background: #eef2f3; margin: 0; padding: 15px; }
+    body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 15px; }
     h2 { color: #333; }
     button { font-size: 20px; padding: 12px 22px; margin: 8px; border: none; border-radius: 10px; background: #1976d2; color: white; cursor: pointer; }
+    button:hover { opacity: 0.9; }
     #reader { width: 320px; margin: auto; margin-top: 20px; }
     #reader video { width: 100% !important; height: auto !important; border-radius: 8px; }
-    #status { margin-top: 20px; font-size: 20px; font-weight: bold; color: #d32f2f; }
+    #status { margin-top: 20px; font-size: 20px; font-weight: bold; color: #006400; white-space: pre-line; }
+    .manual { margin-top: 25px; }
+    input { font-size: 18px; padding: 8px; width: 220px; margin: 6px; }
+    #loading { display: none; color: red; font-weight: bold; margin-top: 15px; }
   </style>
 </head>
 <body>
 
-<h2>📚 図書システム（自動接続テスト版）</h2>
-
-<p>現在の状態をチェックしています...</p>
+<h2>📚 学校図書貸出システム</h2>
 
 <div>
-  <button onclick="testCamera()">🚨 テスト1：カメラだけ動かす</button>
+  <button onclick="setMode('lend')" style="background:#1976d2;">貸出モード</button>
+  <button onclick="setMode('return')" style="background:#2e7d32;">返却モード</button>
 </div>
 
-<div id="status">ボタンを押してください</div>
+<div id="status">モードを選択してください</div>
+<div id="loading">通信中...</div>
 <div id="reader"></div>
 
-<script>
-// 自動で現在のGitHubのURLからあなたのGASのURLを逆算する仕組み（書き換え不要）
-let GAS_URL = ""; 
+<div class="manual">
+  <h3>手入力</h3>
+  <input id="bookCode" placeholder="本番号"><br>
+  <input id="userCode" placeholder="利用者番号"><br><br>
+  <button onclick="manualSend()">送信</button>
+</div>
 
-// 画面が開いた瞬間に、正しくプログラムが動いているかチェック
+<script>
+// ==========================================================
+// 👇【重要】ここにあなたのGASのURLを貼り付けてください（前後の " は消さないでください）
+// ==========================================================
+// 👇【ここにあなたのGASのURLを貼り付けてください】
+const GAS_URL = "https://script.google.com/macros/s/AKfycbxniRhiPhIZeCbIYJGfU8yR_3U0fG0pYb2yYyxs-vb-mdXXSqqbMEJs7hQYb8a3EYSO/exec";
+
+
+let mode = "";
+let step = 0; 
+let book = "";
+let user = "";
+let html5QrCode = null;
+
+// 画面が正常に読み込まれたかチェックする保険
 window.onload = function() {
-    document.getElementById("status").style.color = "#006400";
-    document.getElementById("status").innerHTML = "✅ JavaScriptは正常に作動しています！";
+    console.log("図書システムが正常に起動しました。");
 };
 
-function testCamera() {
-    document.getElementById("status").innerHTML = "カメラを起動中...";
-    document.getElementById("reader").innerHTML = ""; 
-    
-    const html5QrCode = new Html5Qrcode("reader");
-    html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: 250 },
-      function(text) { alert("読み取り成功: " + text); }
-    )
-    .then(() => {
+function setMode(selected) {
+    mode = selected;
+    book = ""; user = "";
+    document.getElementById("bookCode").value = "";
+    document.getElementById("userCode").value = "";
+
+    if (mode === "lend") {
+        step = 1;
         document.getElementById("status").style.color = "#006400";
-        document.getElementById("status").innerHTML = "🎉 大成功！カメラが正常に起動しました！<br>iPhoneのセキュリティ突破完了です。";
+        document.getElementById("status").innerHTML = "📕 【貸出】本のQRコードを読み取ってください";
+        startScanner();
+    } else if (mode === "return") {
+        step = 1;
+        document.getElementById("status").style.color = "#006400";
+        document.getElementById("status").innerHTML = "📗 【返却】本のQRコードを読み取ってください";
+        startScanner();
+    }
+}
+
+function startScanner() {
+  if (html5QrCode && html5QrCode.isScanning) {
+    html5QrCode.stop().then(() => { initAndStart(); }).catch(() => { initAndStart(); });
+  } else {
+    initAndStart();
+  }
+}
+
+function initAndStart() {
+  document.getElementById("reader").innerHTML = ""; 
+  html5QrCode = new Html5Qrcode("reader");
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 250 },
+    onScanSuccess
+  )
+  .catch(err => {
+    document.getElementById("status").style.color = "#d32f2f";
+    document.getElementById("status").innerHTML = "<span style='color:red;'>カメラ起動失敗</span><br><small>" + err + "</small>";
+  });
+}
+
+function onScanSuccess(decodedText) {
+    if (html5QrCode && html5QrCode.isScanning) {
+        html5QrCode.stop().then(() => { handleScanResult(decodedText); }).catch(() => { handleScanResult(decodedText); });
+    } else {
+        handleScanResult(decodedText);
+    }
+}
+
+function handleScanResult(decodedText) {
+    if (mode === "lend") {
+        if (step === 1) {
+            book = decodedText;
+            document.getElementById("bookCode").value = book;
+            step = 2;
+            document.getElementById("status").innerHTML = "👤 【貸出】利用者QRコードを読み取ってください";
+            setTimeout(() => { startScanner(); }, 500);
+        } else if (step === 2) {
+            user = decodedText;
+            document.getElementById("userCode").value = user;
+            sendData();
+        }
+    } else if (mode === "return") {
+        book = decodedText;
+        document.getElementById("bookCode").value = book;
+        user = "";
+        sendData();
+    }
+}
+
+function manualSend() {
+    if (!mode) { alert("最初にモードを選択してください。"); return; }
+    book = document.getElementById("bookCode").value.trim();
+    user = document.getElementById("userCode").value.trim();
+    if (book === "") { alert("本番号を入力してください。"); return; }
+    if (mode === "lend" && user === "") { alert("利用者番号を入力してください。"); return; }
+
+    if (html5QrCode && html5QrCode.isScanning) {
+        html5QrCode.stop().then(() => { sendData(); }).catch(() => { sendData(); });
+    } else {
+        sendData();
+    }
+}
+
+function sendData() {
+    document.getElementById("loading").style.display = "block";
+    document.getElementById("status").style.color = "#000000";
+    document.getElementById("status").innerHTML = "データを送信中...";
+
+    fetch(GAS_URL, {
+        method: "POST",
+        body: JSON.stringify({ mode: mode, book: book, user: user })
     })
-    .catch(err => {
+    .then(res => res.text())
+    .then(message => {
+        document.getElementById("loading").style.display = "none";
+        
+        // サーバーからの結果（「完了しました」など）を表示
+        document.getElementById("status").innerHTML = message;
+
+        document.getElementById("bookCode").value = "";
+        document.getElementById("userCode").value = "";
+        book = ""; user = ""; step = 1; 
+
+        if (message.includes("完了")) {
+            document.getElementById("status").style.color = "#006400";
+            document.getElementById("status").innerHTML += `\n\n🔄 続けて次の本を読み取れます（${mode === 'lend' ? '貸出' : '返却'}）`;
+        } else {
+            document.getElementById("status").style.color = "#d32f2f";
+            document.getElementById("status").innerHTML += `\n\n⚠️ エラーを確認して、もう一度やり直してください。`;
+        }
+        setTimeout(() => { startScanner(); }, 1800);
+    })
+    .catch(error => {
+        document.getElementById("loading").style.display = "none";
         document.getElementById("status").style.color = "#d32f2f";
-        document.getElementById("status").innerHTML = "❌ カメラ起動失敗:<br>" + err;
+        alert("通信エラーが発生しました。GASのURLや公開設定（全員になっているか）を確認してください。\n\n詳細: " + error.message);
+        setTimeout(() => { startScanner(); }, 1800);
     });
 }
 </script>
